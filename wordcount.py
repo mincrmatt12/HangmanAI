@@ -15,30 +15,8 @@ for i in raw_bits:
 
 words = content.readlines()
 letter_count_by_length = {}
-
-print "- Loading word dictionary..."
-print "  = Loading letter frequency index"
-
 last = ''
-
-for word in words:
-    word = word.strip('\n')
-    if len(word) > 0 and word[0] != last:
-        print "     ~ Completed letter", last
-        last = word[0]
-
-    if len(word) in letter_count_by_length:
-        for i, letter in enumerate(string.ascii_lowercase):
-            count = word.count(letter)
-            letter_count_by_length[len(word)][i] += count
-
-    else:
-        letter_count_by_length[len(word)] = [0 for x in xrange(len(string.ascii_lowercase))]
-        for i, letter in enumerate(string.ascii_lowercase):
-            count = word.count(letter)
-            letter_count_by_length[len(word)][i] += count
-
-print "     ~ Completed letter z"
+print "- Loading word dictionary..."
 print "  = Loading words by letter count"
 
 words_by_length = {}
@@ -374,6 +352,8 @@ def do_guess():
     update_possible()
     a, b = best()
     print a.segment
+    if len(possible) < 15:
+        print "Possible words: ", possible
     status = raw_input("> ").split("/")
     truth = raw_input("T? ").lower()
     tried.append(a.number)
@@ -382,7 +362,6 @@ def do_guess():
         shuffle_up(a)
     elif truth == 'n':
         all_predictions_ever[a.number].falsify()
-        all_predictions_ever[b.number].falsify()
     elif truth == 'w':
         init_with_length(raw_input("l; "))
 
