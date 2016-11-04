@@ -1,8 +1,11 @@
 import string
 from operator import attrgetter
-import difflib
+import pygame
+import pygame.freetype
 
 import re
+
+pygame.init()
 
 content = open('words.txt')
 raw_bits = open('common_bits.txt').readlines()
@@ -41,7 +44,38 @@ predictions = []
 remaining = -1
 global_number = 0
 possible = []
+possible_weighted = {}
 status = []
+
+surf = pygame.display.set_mode([1024, 768])
+pygame.display.set_caption("HangmanAI")
+
+font = pygame.freetype.Font("OpenSans-Regular.ttf")
+mono = pygame.freetype.Font("LiberationMono-Regular.ttf")
+
+editor_selected = 3
+
+
+def display_state():
+    global surf, status
+
+    filed = "".join(("-" if x == "." else x for x in status))
+    # print filed
+    sized = mono.get_rect(filed, size=52)
+    sized.width += sized.x
+    sized.height += 15
+    posy = 15
+    posx = 512 - sized.width / 2
+
+    bg = pygame.Surface(sized.size, pygame.SRCALPHA)
+    if editor_selected > -1:
+        sizy = mono.get_rect(" " * editor_selected, size=52)
+        x = sizy.width + sizy.x
+        mono_underscore = mono.get_rect("_", size=52)
+        bg.fill((127, 127, 255), (x, sized.height - 10, mono_underscore.width - 2, 10))
+
+    mono.render_to(bg, (0, 0), filed, fgcolor=(0, 0, 0), bgcolor=(0, 0, 0, 0), size=52)
+    surf.blit(bg, (posx, posy))
 
 
 class Prediction(object):
@@ -79,6 +113,9 @@ class Prediction(object):
     def notgood(self):
         return False
 
+    def pretty(self):
+        return "Blank"
+
 
 class ContainsPrediction(Prediction):
     def __init__(self, segment):
@@ -108,6 +145,9 @@ class ContainsPrediction(Prediction):
 
     def __repr__(self):
         return "CP: " + self.segment
+
+    def pretty(self):
+        return "Word contains {}".format(self.segment)
 
 
 class MatchesRegexPrediction(Prediction):
@@ -154,11 +194,25 @@ class MatchesRegexPrediction(Prediction):
     def weight_scale(self):
         return 0.15 * len(self.plain) - self.plain.count('.') + 0.2
 
+    def pretty(self):
+        return "Word matches regex {}".format(self.plain)
+
+
+def status_text(text):
+    pygame.event.pump()
+    sized = font.get_rect(text, size=32)
+    surf.fill((255, 255, 255), (0, 150, 1024, 618))
+    sized.width += sized.x
+    font.render_to(surf, (512 - sized.width / 2, 200), text, fgcolor=(0, 0, 0), size=32)
+    pygame.display.flip()
+
 
 def update_possible():
-    global possible, predictions
+    global possible, predictions, possible_weighted
     possible_old = possible[:]
     possible = []
+    possible_weight = {}
+    possible_weighted = {}
 
     for prediction in predictions:
         if prediction.false is False and prediction.true is False:
@@ -167,29 +221,49 @@ def update_possible():
                 prediction.false = False
 
     vals = [0 for x in xrange(len(predictions))]
-    for word in possible_old:
+    a = len(possible_old)
+    for position, word in enumerate(possible_old):
         good = True
+        possible_weight[word] = 0
         for i, prediction in enumerate(predictions):
             if prediction.valid_for(word):
                 vals[i] += 1
+                possible_weight[word] += 1
                 if prediction.false:
                     good = False
+                    possible_weight[word] -= 1
             else:
                 if prediction.true:
                     good = False
         if good:
             possible.append(word)
 
+        if position % 150 == 0:
+            status_text("Word validity checking: {} of {}".format(position + 1, a))
+
+    status_text("Word validity checking: {} of {}".format(a, a))
+
     total = len(possible)
     for i, prediction in enumerate(predictions):
         weight = float(vals[i]) / total
         predictions[i].weight = weight * predictions[i].weight_scale()
+        status_text("Prediction weighting: {} of {}".format(i + 1, len(predictions)))
 
     delme = []
 
     for i in range(len(predictions)):
         if predictions[i].weight == 0.0:
             delme.append(predictions[i].number)
+
+    total = len(possible_weight)
+
+    for count, i in enumerate(possible_weight):
+        if i in possible:
+            possible_weighted[i] = possible_weight[i] / float(len(predictions))
+        if count % 150 == 0:
+            status_text("Word weighting: {} of {}".format(count + 1, total))
+
+    status_text("Word weighting: {} of {}".format(total, total))
 
     for i in delme:
         predictions.remove(all_predictions_ever[i])
@@ -234,6 +308,7 @@ def depends(at):
         if at.number in i.childs:
             f.append(i)
     return f
+
 
 tried = []
 
@@ -348,12 +423,10 @@ init_with_length(int(raw_input("l: ")))
 
 def do_guess():
     global status
-    iterate_modules()
-    update_possible()
     a, b = best()
     print a.segment
     if len(possible) < 15:
-        print "Possible words: ", possible
+        print "Possible words: ", possible_weighted
     status = raw_input("> ").split("/")
     truth = raw_input("T? ").lower()
     tried.append(a.number)
@@ -366,5 +439,105 @@ def do_guess():
         init_with_length(raw_input("l; "))
 
 
+def display_predictions():
+    sorted_pred = tuple(reversed(sorted(predictions, key=attrgetter("weight"))))
+    sorted_pred = tuple(x for x in sorted_pred if x.true is False and x.false is False)
+    sorted_pred = tuple(reversed(sorted(sorted_pred, key=attrgetter("weight"))))
+    sized = font.render_to(surf, (5, 220), "Predictions:", size=22, fgcolor=(0, 0, 255))
+    y = sized.height + sized.y + 225
+    i = 0
+    while y < 700 and i < len(sorted_pred):
+        pred = sorted_pred[i]
+
+        dist = 255 - max(0, min(255, int((700 - 225 - y) * 1.462)))
+        sized = font.render_to(surf, (5, y), pred.pretty(), size=16, fgcolor=(dist, dist, dist))
+        i += 1
+        y += sized.height + 5
+
+
+def display_words():
+    sorted_words = tuple(sorted(possible_weighted, key=possible_weighted.get, reverse=True))
+    sized = font.get_rect("Words:", size=22)
+
+    sized = font.render_to(surf, (1024-5-sized.x-sized.width, 220), "Words:", size=22, fgcolor=(0, 0, 255))
+    y = sized.height + sized.y + 225
+    i = 0
+    while y < 700 and i < len(sorted_words):
+
+        dist = 255 - max(0, min(255, int((700 - 225 - y) * 0.862)))
+        sized = font.get_rect(sorted_words[i], size=16)
+        sized = font.render_to(surf, (1024-5-sized.x-sized.width, y), sorted_words[i], size=16, fgcolor=(dist, dist,
+                                                                                                         dist))
+        i += 1
+        y += sized.height + 5
+
+
+estate = 0
+
+ga, gb = None, None
+
+yn_c = True
+
+
+def display_input_guess():
+    global ga, gb
+
+    font.render_to(surf, (25, 150), "Guess: {}".format(ga.segment), size=48)
+    met = font.get_rect("Correct? {}".format("Y" if yn_c else "N"), size=48)
+    x = met.x + met.width
+    font.render_to(surf, (1024-25-x, 150), None, fgcolor=(0, 255, 0), size=48)
+
+
 while True:
-    do_guess()
+    surf.fill([255, 255, 255])
+    display_state()
+    if estate == 0:
+        editor_selected = -1
+        iterate_modules()
+        update_possible()
+        update_possible()
+        if "." not in status:
+            estate = 2
+            continue
+        status_text("")
+        ga, gb = best()
+
+        estate = 1
+        pygame.display.flip()
+    elif estate == 1:
+        display_input_guess()
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    yn_c = not yn_c
+                elif event.key == pygame.K_LEFT:
+                    editor_selected -= 1
+                    editor_selected = max(0, editor_selected)
+                elif event.key == pygame.K_RIGHT:
+                    editor_selected += 1
+                    editor_selected = min(len(status)-1, editor_selected)
+                elif event.key == pygame.K_BACKSPACE and editor_selected != -1:
+                    status[editor_selected] = "."
+                elif event.key == pygame.K_RETURN:
+                    tried.append(ga.number)
+                    if yn_c:
+                        all_predictions_ever[ga.number].true = True
+                        shuffle_up(ga)
+                    else:
+                        all_predictions_ever[ga.number].falsify()
+                    estate = 0
+                else:
+                    try:
+                        val = chr(event.key)
+                        if val in string.ascii_lowercase and editor_selected != -1:
+                            status[editor_selected] = val
+                    except ValueError:
+                        pass
+    elif estate == 2:
+        pass
+    if estate != 2:
+        display_words()
+        display_predictions()
+
+    pygame.display.flip()
+   # do_guess()
