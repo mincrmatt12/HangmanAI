@@ -179,7 +179,7 @@ class UsesBitPrediction(Prediction):
         return False
 
     def weight_scale(self):
-        return 0.15 + 0.1*len(self.bit[1])
+        return 0.15 + 0.1*(4-len(self.bit[1]))
 
     def pretty(self):
         return "Word {} with {}".format("ends" if self.bit[0] else "starts", self.bit[1])
@@ -578,8 +578,13 @@ while True:
                             status[editor_selected] = val
                     except ValueError:
                         pass
+            elif event.type == pygame.QUIT:
+                pygame.quit()
     elif estate == 2:
         end_game()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
     if estate != 2:
         display_words()
         display_predictions()
