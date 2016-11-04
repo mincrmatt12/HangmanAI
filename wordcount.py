@@ -13,6 +13,8 @@ raw_bits = open('common_bits.txt').readlines()
 bits = []
 for i in raw_bits:
     bit = i[1:]
+    bit = bit.strip("\n")
+   # print i[0], i[0] == "-", i
     suf = i[0] == "-"
     bits.append((suf, bit))
 
@@ -23,6 +25,8 @@ print "- Loading word dictionary..."
 print "  = Loading words by letter count"
 
 words_by_length = {}
+wrongs = 0
+rights = 0
 
 for word in words:
     word = word.strip("\n")
@@ -148,6 +152,37 @@ class ContainsPrediction(Prediction):
 
     def pretty(self):
         return "Word contains {}".format(self.segment)
+
+
+class UsesBitPrediction(Prediction):
+    def __init__(self, bit_):
+        super(UsesBitPrediction, self).__init__()
+        self.bit = bit_
+
+    def valid_for(self, word):
+        if self.bit[0]:
+            return word.endswith(self.bit[1])
+        else:
+            return word.startswith(self.bit[1])
+
+    def good(self):
+        return self.valid_for(''.join(status))
+
+    def depends_on(self, other):
+        if type(other) == ContainsPrediction:
+            return other.segment in self.bit[1]
+        return False
+
+    def equals(self, other):
+        if type(other) == UsesBitPrediction:
+            return other.bit == self.bit
+        return False
+
+    def weight_scale(self):
+        return 0.15 + 0.1*len(self.bit[1])
+
+    def pretty(self):
+        return "Word {} with {}".format("ends" if self.bit[0] else "starts", self.bit[1])
 
 
 class MatchesRegexPrediction(Prediction):
@@ -293,6 +328,9 @@ def init_with_length(l):
 
     for letter in string.ascii_lowercase:
         add_prediction(ContainsPrediction(letter))
+
+    for bit_ in bits:
+        add_prediction(UsesBitPrediction(bit_))
 
 
 def shuffle_up(at):
@@ -488,6 +526,11 @@ def display_input_guess():
     font.render_to(surf, (1024-25-x, 150), None, fgcolor=(0, 255, 0), size=48)
 
 
+def end_game():
+    font.render_to(surf, (5, 200), "Correct guesses: {}".format(rights), size=16, fgcolor=(25, 140, 25))
+    font.render_to(surf, (5, 236), "Wrong guesses: {}".format(wrongs), size=16, fgcolor=(255, 127, 127))
+    font.render_to(surf, (7, 280), "Guesses: {}".format(rights+wrongs), size=40, fgcolor=(70, 70, 70))
+
 while True:
     surf.fill([255, 255, 255])
     display_state()
@@ -523,8 +566,10 @@ while True:
                     if yn_c:
                         all_predictions_ever[ga.number].true = True
                         shuffle_up(ga)
+                        rights += 1
                     else:
                         all_predictions_ever[ga.number].falsify()
+                        wrongs += 1
                     estate = 0
                 else:
                     try:
@@ -534,7 +579,7 @@ while True:
                     except ValueError:
                         pass
     elif estate == 2:
-        pass
+        end_game()
     if estate != 2:
         display_words()
         display_predictions()

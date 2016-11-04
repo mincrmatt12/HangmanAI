@@ -178295,7 +178295,7 @@ miscellane
 miscellanea
 miscellaneal
 miscellaneity
-miscellaneous
+miscellaneousmiscellaneous
 miscellaneously
 miscellaneousness
 miscellanies
@@ -342201,6 +342201,7 @@ velocipeded
 velocipedes
 velocipedic
 velocipeding
+velociraptor
 velocities
 velocitous
 velocity
