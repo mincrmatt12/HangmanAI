@@ -2,12 +2,14 @@ import string
 from operator import attrgetter
 import pygame
 import pygame.freetype
+import collections
 
 import re
 
 pygame.init()
 
 content = open('words.txt')
+popularity = open('word_counts.txt')
 raw_bits = open('common_bits.txt').readlines()
 
 bits = []
@@ -20,6 +22,15 @@ for i in raw_bits:
 
 words = content.readlines()
 letter_count_by_length = {}
+word_popularity = collections.defaultdict(lambda: 0)
+low = 2
+for i in popularity.readlines():
+    wordy = i.split(" ")[0]
+    valy = float(i.split(" ")[1].strip("\n"))
+    word_popularity[wordy] = valy
+    low = min(low, valy)
+word_popularity.default_factory = lambda: low
+
 last = ''
 print "- Loading word dictionary..."
 print "  = Loading words by letter count"
@@ -29,8 +40,11 @@ wrongs = 0
 rights = 0
 
 for word in words:
-    word = word.strip("\n")
+    word = word.strip("\n").lower()
     if len(word) == 0:
+        continue
+
+    if "-" in word:
         continue
     if word[0] != last:
         print "     ~ Completed letter", last
@@ -104,6 +118,9 @@ class Prediction(object):
 
     def weight_scale(self):
         return 1.0
+
+    def __eq__(self, other):
+        return self.equals(other)
 
     def falsify(self):
         self.false = True
@@ -179,7 +196,7 @@ class UsesBitPrediction(Prediction):
         return False
 
     def weight_scale(self):
-        return 0.15 + 0.1*(4-len(self.bit[1]))
+        return 0.125 + 0.075*len(self.bit[1])
 
     def pretty(self):
         return "Word {} with {}".format("ends" if self.bit[0] else "starts", self.bit[1])
@@ -249,11 +266,23 @@ def update_possible():
     possible_weight = {}
     possible_weighted = {}
 
-    for prediction in predictions:
+    for i, prediction in enumerate(predictions):
+        if i % 8 == 0:
+            status_text("Checking forced validity of predictions: {} of {}".format(i, len(predictions)))
         if prediction.false is False and prediction.true is False:
             if prediction.good():
                 prediction.true = True
                 prediction.false = False
+            elif len(possible) > 1:
+                tops = topmost(prediction)
+                valid = True
+                for top in tops:
+                    if not (top.true and not top.false):
+                        valid = False
+                if valid:
+                    if not prediction.good():
+                        prediction.false = True
+                        prediction.true = False
 
     vals = [0 for x in xrange(len(predictions))]
     a = len(possible_old)
@@ -262,11 +291,11 @@ def update_possible():
         possible_weight[word] = 0
         for i, prediction in enumerate(predictions):
             if prediction.valid_for(word):
-                vals[i] += 1
-                possible_weight[word] += 1
+                vals[i] += word_popularity[word] if "".join(status).count(".") >= max(2, len(status) / 3) else 1.0
+                possible_weight[word] += prediction.weight_scale() * word_popularity[word]
                 if prediction.false:
                     good = False
-                    possible_weight[word] -= 1
+                    possible_weight[word] -= prediction.weight_scale() * word_popularity[word]
             else:
                 if prediction.true:
                     good = False
@@ -308,7 +337,8 @@ def add_prediction(p):
     global predictions
 
     for exist in predictions:
-        if exist.equals(p):
+        if exist.equals(p) or p.equals(exist):
+            print "hi", p, exist
             return
         if p.depends_on(exist):
             exist.childs.append(p.number)
@@ -437,11 +467,13 @@ modules = [random_common_module, current_board_module]
 
 
 def iterate_modules():
+    global predictions
     addable = []
     for module in modules:
         addable.extend(module())
     for ad in addable:
         add_prediction(ad)
+    predictions = list(set(predictions))
 
 
 def topmost(a, v=0):
@@ -531,63 +563,64 @@ def end_game():
     font.render_to(surf, (5, 236), "Wrong guesses: {}".format(wrongs), size=16, fgcolor=(255, 127, 127))
     font.render_to(surf, (7, 280), "Guesses: {}".format(rights+wrongs), size=40, fgcolor=(70, 70, 70))
 
-while True:
-    surf.fill([255, 255, 255])
-    display_state()
-    if estate == 0:
-        editor_selected = -1
-        iterate_modules()
-        update_possible()
-        update_possible()
-        if "." not in status:
-            estate = 2
-            continue
-        status_text("")
-        ga, gb = best()
+if __name__ == "__main__":
+    while True:
+        surf.fill([255, 255, 255])
+        display_state()
+        if estate == 0:
+            editor_selected = -1
+            iterate_modules()
+            update_possible()
+            update_possible()
+            if "." not in status:
+                estate = 2
+                continue
+            status_text("")
+            ga, gb = best()
 
-        estate = 1
-        pygame.display.flip()
-    elif estate == 1:
-        display_input_guess()
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    yn_c = not yn_c
-                elif event.key == pygame.K_LEFT:
-                    editor_selected -= 1
-                    editor_selected = max(0, editor_selected)
-                elif event.key == pygame.K_RIGHT:
-                    editor_selected += 1
-                    editor_selected = min(len(status)-1, editor_selected)
-                elif event.key == pygame.K_BACKSPACE and editor_selected != -1:
-                    status[editor_selected] = "."
-                elif event.key == pygame.K_RETURN:
-                    tried.append(ga.number)
-                    if yn_c:
-                        all_predictions_ever[ga.number].true = True
-                        shuffle_up(ga)
-                        rights += 1
+            estate = 1
+            pygame.display.flip()
+        elif estate == 1:
+            display_input_guess()
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        yn_c = not yn_c
+                    elif event.key == pygame.K_LEFT:
+                        editor_selected -= 1
+                        editor_selected = max(0, editor_selected)
+                    elif event.key == pygame.K_RIGHT:
+                        editor_selected += 1
+                        editor_selected = min(len(status)-1, editor_selected)
+                    elif event.key == pygame.K_BACKSPACE and editor_selected != -1:
+                        status[editor_selected] = "."
+                    elif event.key == pygame.K_RETURN:
+                        tried.append(ga.number)
+                        if yn_c:
+                            all_predictions_ever[ga.number].true = True
+                            shuffle_up(ga)
+                            rights += 1
+                        else:
+                            all_predictions_ever[ga.number].falsify()
+                            wrongs += 1
+                        estate = 0
                     else:
-                        all_predictions_ever[ga.number].falsify()
-                        wrongs += 1
-                    estate = 0
-                else:
-                    try:
-                        val = chr(event.key)
-                        if val in string.ascii_lowercase and editor_selected != -1:
-                            status[editor_selected] = val
-                    except ValueError:
-                        pass
-            elif event.type == pygame.QUIT:
-                pygame.quit()
-    elif estate == 2:
-        end_game()
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-    if estate != 2:
-        display_words()
-        display_predictions()
+                        try:
+                            val = chr(event.key)
+                            if val in string.ascii_lowercase and editor_selected != -1:
+                                status[editor_selected] = val
+                        except ValueError:
+                            pass
+                elif event.type == pygame.QUIT:
+                    pygame.quit()
+        elif estate == 2:
+            end_game()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+        if estate != 2:
+            display_words()
+            display_predictions()
 
-    pygame.display.flip()
-   # do_guess()
+        pygame.display.flip()
+       # do_guess()
