@@ -138,6 +138,42 @@ class Prediction(object):
         return "Blank"
 
 
+class NotPrediction(Prediction):
+    def __init__(self, pos, mal):
+        super(NotPrediction, self).__init__()
+        self.pos = pos
+        self.mal = mal
+
+    def valid_for(self, word):
+        for w, a in zip(word, self.pos):
+            if w == self.mal and not a:
+                return False
+            elif w != self.mal and a:
+                return False
+        return True
+
+    def depends_on(self, other):
+        if type(other) == ContainsPrediction:
+            if other.segment == self.mal:
+                return True
+        return False
+
+    def equals(self, other):
+        if type(other) == NotPrediction:
+            if other.mal == self.mal and other.pos == self.pos:
+                return True
+        return False
+
+    def weight_scale(self):
+        return 1.0
+
+    def good(self):
+        return self.valid_for("".join(status))
+
+    def pretty(self):
+        return "Contains specific letters"
+
+
 class ContainsPrediction(Prediction):
     def __init__(self, segment):
         super(ContainsPrediction, self).__init__()
@@ -434,6 +470,26 @@ def current_board_module():
     return [m]
 
 
+def mal_create():
+    plain = "".join(status)
+    ad = []
+
+    for letter in string.ascii_lowercase:
+        if letter in plain:
+            print letter
+            new = []
+            for pos in plain:
+                if pos == letter:
+                    new.append(True)
+                else:
+                    new.append(False)
+            x = NotPrediction(new, letter)
+            x.true = True
+            ad.append(x)
+
+    return ad
+
+
 def random_common_module():
     DEPTH = 2
 
@@ -463,7 +519,7 @@ def random_common_module():
     return added
 
 
-modules = [random_common_module, current_board_module]
+modules = [random_common_module, current_board_module, mal_create]
 
 
 def iterate_modules():
