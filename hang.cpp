@@ -11,7 +11,7 @@ using namespace std::string_literals;
 // Class definitions
 
 struct prediction {
-	static std::vector<std::unique_ptr<prediction>> all;
+	static std::list<std::unique_ptr<prediction>> all;
 
 	const uint8_t type_id;
 	std::list<prediction *> children{};
@@ -34,6 +34,26 @@ struct prediction {
 
 	virtual std::string as_string() const {return "Unknown"s;};
 	virtual float importance() const {return 1.0f;}
+
+	std::list<prediction *> parents() const {
+		std::list<prediction *> dat{};
+		for (auto &p : prediction::all) {
+			if (this->depends_on(p.get())) dat.push_back(p.get());
+		}
+		return dat;
+	}
+
+	std::list<prediction *> topmost() {
+		auto p_list = parents();
+		if (p_list.size() == 0) {
+			return {this};
+		}
+		std::list<prediction *> result{};
+		for (auto &a : p_list) {
+			result.splice(result.begin(), a->topmost());
+		}
+		return result;
+	}
 };
 
 struct cbit {
@@ -56,7 +76,7 @@ const T* asa(const prediction *e) {
 	return reinterpret_cast<const T*>(e);
 }
 
-std::vector<std::unique_ptr<prediction>> prediction::all;
+std::list<std::unique_ptr<prediction>> prediction::all;
 
 // Prediction definitions
 
@@ -333,6 +353,35 @@ void generate_invalid_mask() {
 	}
 }
 
-const prediction * best_guess() {
-
+void generate_predictions() {
+	generate_invalid_mask();
+	generate_random_common();
+	generate_current_board();
 }
+
+prediction * best_guess() {
+	// strategy to get guesses:
+	//
+	// find the highest weighted prediction which is neither certain nor invalid
+	// find it's topmost things (which should only be contains)
+	// pick the highest weighted one of _those_, and return it
+	
+	std::list<prediction *> prediction_copy = predictions;
+
+	prediction_copy.remove_if([](const auto& p){return p->certain || p->invalid;});
+
+	while (!prediction_copy.empty()) {
+		auto best_choice = std::max_element(prediction_copy.begin(), prediction_copy.end(), [](const auto &a, const auto &b){return a->weight < b->weight;});
+		auto topmosts = (*best_choice)->topmost();
+		topmosts.remove_if([](const auto& p){return p->certain || p->invalid;});
+		if (topmosts.empty()) prediction_copy.erase(best_choice);
+		else {
+			auto real_best = std::max_element(topmosts.begin(), topmosts.end(), [](const auto &a, const auto &b){return a->weight < b->weight;}); 
+			return *real_best;
+		}
+	}
+
+	throw std::runtime_error("no predictions remaining");
+}
+
+
