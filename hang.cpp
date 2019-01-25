@@ -485,7 +485,7 @@ void update_predictions() {
 	// finally, we can prune everything with a weight of zero
 	
 	predictions.remove_if([](const auto &c){
-		return c->weight < std::numeric_limits<float>::epsilon();
+		return c->weight == 0.0f;
 	});
 }
 
