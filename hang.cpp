@@ -512,6 +512,7 @@ void init_file_data() {
 	}
 
 	std::ifstream pop_list("word_counts.txt");
+	float minimum_pop = std::numeric_limits<float>::max();
 
 	while (pop_list) {
 		std::string word;
@@ -521,6 +522,11 @@ void init_file_data() {
 		pop_list >> pop;
 
 		word_popularity[word] = pop;
+		minimum_pop = std::min(pop, minimum_pop);
+	}
+
+	for (const auto& word : words) {
+		if (word_popularity.count(word) == 0) word_popularity[word] = minimum_pop;
 	}
 }
 
