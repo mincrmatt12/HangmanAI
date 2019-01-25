@@ -3,12 +3,16 @@ from operator import attrgetter
 import pygame
 import pygame.freetype
 import collections
+import os
+
+enable_va = os.getenv("WEIGHT_USAGE", "1")
+enable_va = int(enable_va) == 1
 
 import re
+valid_word = re.compile("[a-z]+")
 
 pygame.init()
 
-content = open('words.txt')
 popularity = open('word_counts.txt')
 raw_bits = open('common_bits.txt').readlines()
 
@@ -20,16 +24,27 @@ for i in raw_bits:
     suf = i[0] == "-"
     bits.append((suf, bit))
 
-words = content.readlines()
+words = []
 letter_count_by_length = {}
 word_popularity = collections.defaultdict(lambda: 0)
 low = 2
 for i in popularity.readlines():
     wordy = i.split(" ")[0]
+    if not valid_word.match(wordy):
+        continue    
     valy = float(i.split(" ")[1].strip("\n"))
-    word_popularity[wordy] = valy
+    word_popularity[wordy] = valy if enable_va else 1
     low = min(low, valy)
+    words.append(wordy)
 word_popularity.default_factory = lambda: low
+
+with open('words.txt', 'r') as f:
+    for l in f.readlines():
+        if not valid_word.match(l):
+            continue    
+        if l in word_popularity:
+            continue
+        words.append(l)
 
 last = ''
 print "- Loading word dictionary..."
