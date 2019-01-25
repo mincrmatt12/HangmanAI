@@ -606,6 +606,10 @@ retry:
 		}
 
 		if (new_status.size() != 0) status = new_status;
+
+		if (possible.size() == 0) {
+			throw std::runtime_error("no more words");
+		}
 	}
 
 	std::cout << "Word is: " << status << std::endl;
