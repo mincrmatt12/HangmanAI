@@ -1,5 +1,6 @@
 #include <map>
 #include <algorithm>
+#include <cstring>
 #include <vector>
 #include <list>
 #include <iostream>
@@ -38,7 +39,7 @@ struct prediction {
 	std::list<prediction *> parents() const {
 		std::list<prediction *> dat{};
 		for (auto &p : prediction::all) {
-			if (this->depends_on(p.get())) dat.push_back(p.get());
+			if (!p->congruent(this) && this->depends_on(p.get())) dat.push_back(p.get());
 		}
 		return dat;
 	}
@@ -251,9 +252,9 @@ struct matches_holemap_prediction : public prediction {
 
 // loaded file resources
 
-std::string current_word;
 std::vector<std::string> words;
 std::vector<cbit> bits;
+std::map<std::string, float> word_popularity;
 
 // global state
 
@@ -274,7 +275,7 @@ prediction * make_prediction(Args&&... args) {
 	if (std::none_of(predictions.begin(), predictions.end(), [&](const auto &p1){
 		return t_ptr->depends_on(p1) && p1->invalid;
 	})) {
-		predictions.push_back(t_ptr.get());
+		predictions.push_front(t_ptr.get());
 	}
 
 	auto r_ptr = t_ptr.get();
@@ -384,4 +385,225 @@ prediction * best_guess() {
 	throw std::runtime_error("no predictions remaining");
 }
 
+// wrangle current predictions
 
+template<bool Second>
+void update_predictions_loop(float vals[], std::vector<std::string> &new_possible) {
+	int old_size = predictions.size();
+
+    #pragma omp parallel for reduction(+:vals[:old_size])
+	for (int i = 0; i < possible.size(); ++i) {
+		// collapse ommited here because i want things
+		bool good = true;
+		int j = 0;
+		for (const auto &a : predictions) {
+			if (a->valid_for(possible[i])) {
+				if (a->invalid) {
+					good = false;
+				}
+				if constexpr (Second)
+					vals[j] += word_popularity[possible[i]] * a->importance();
+			}
+			else if (a->certain) {
+				good = false;
+			}
+			++j;
+		}
+
+		if constexpr (!Second) {
+			if (good) {
+			#pragma omp critical(new_possible_inc)
+				{
+					new_possible.push_back(possible[i]);
+				}
+			}
+		}
+		
+		if (i % 150 == 0) {
+			#pragma omp critical(cout)
+			{
+				std::cout << (Second ? "WVC2: " : "WVC: ") << i << " of " << possible.size() << "\r";
+			}
+		}
+	}
+	std::cout << (Second ? "WCV2: " : "WVC: ") << possible.size() << " of " << possible.size() << "\r";
+	std::cout << std::endl;
+}
+
+void update_predictions() {
+	// check for forced valididity/invalidity
+	//
+	// if a prediction is good for the current status, mark it as certain
+	
+	{
+		int j = 0;
+		for (auto &i : predictions) {
+			if (!(i->certain || i->invalid)) {
+				if (i->valid_for(status)) {
+					i->certain = true;
+					i->invalid = false;
+				}
+				else if (!possible.empty()) {
+					auto tops = i->topmost();
+					if (std::all_of(tops.begin(), tops.end(), [](const auto& p){return p->certain && !p->invalid;})) {
+						i->invalid = true;
+						i->certain = false;
+					}
+				}
+			}
+			if (j % 8 == 0)
+				std::cout << "FVC: " << j << " of " << predictions.size() << "\r";
+			++j;
+		}
+		std::cout << std::endl;
+	}
+
+	// the primary loop: investigate which words are valid, as well as assign vals
+	float vals[predictions.size()];
+	memset(vals, 0, predictions.size() * sizeof(float));
+	std::vector<std::string> new_possible{};
+
+	update_predictions_loop<false>(vals, new_possible);
+	// we now have the possible array, so let's copy that
+	possible = std::move(new_possible);
+
+	// redo it to get properly setup vals
+	update_predictions_loop<true>(vals, new_possible);
+
+	// now, we can go weight all of the predictions
+	
+	{
+		int j = 0;
+		for (auto& i: predictions) {
+			i->weight = (vals[j] / (float)possible.size()) * i->importance();
+			++j;
+			std::cout << "PW: " << j << " of " << predictions.size() << "\r";
+		}
+		std::cout << std::endl;
+	}
+
+	// finally, we can prune everything with a weight of zero
+	
+	predictions.remove_if([](const auto &c){
+		return c->weight < std::numeric_limits<float>::epsilon();
+	});
+}
+
+void init_file_data() {
+	std::ifstream word_list("words.txt");
+
+	char line[64] = {0}; // some words are fairly long
+
+	while (word_list.getline(line, 64)) {
+		std::string l = line;
+		
+		if (l.find('-') != std::string::npos) continue;
+		words.push_back(std::move(l));
+	}
+
+	std::ifstream bit_list("common_bits.txt");
+	
+	while (word_list.getline(line, 64)) {
+		cbit c;
+		c.content = std::string{line + 1};
+		c.at_begin = *line == '+';
+
+		bits.push_back(std::move(c));
+	}
+
+	std::ifstream pop_list("word_counts.txt");
+
+	while (pop_list) {
+		std::string word;
+		float pop;
+
+		pop_list >> word;
+		pop_list >> pop;
+
+		word_popularity[word] = pop;
+	}
+}
+
+void init(int length) {
+	init_file_data();
+	init_default_predictions();
+
+	status = std::string(length, '-');
+	
+	for (const auto& word : words) {
+		if (word.size() == length) possible.push_back(word);
+	}
+}
+
+int main(int argc, char ** argv) {
+	std::cout << "HangmanAI v2.0" << std::endl
+		      << "Copyright (c) Matthew Mirvish 2019" << std::endl
+			  << "See LICENSE for more information" << std::endl << std::endl;
+	// Begin by asking for the length of the word.
+	
+	int word_length;
+	std::cout << "How many dashes? " << std::endl;
+	std::cin >> word_length;
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+	std::cout << "protip: you can enter nothing at the 'new state' prompt for a wrong guess!" << std::endl;
+	std::cout << "Loading with length " << word_length << "...";
+	std::cout.flush();
+	init(word_length);
+	std::cout << "done." << std::endl;
+
+	// Main game loop -- update, get guess, display state, ask for new status, repeat
+	
+	int total_guesses = 0, wrong_guesses = 0;
+	
+	while (status.find('-') != std::string::npos) {
+		generate_predictions();
+		update_predictions();
+		auto guess = best_guess();
+
+		total_guesses += 1;
+
+		if (!isa<contains_prediction>(guess)) throw std::logic_error("invalid prediction type in loop");
+		std::cout << "== " << status << " ==" << std::endl;
+		std::cout << "== GUESS: " << asa<contains_prediction>(guess)->segment << " ==";
+		std::cout << std::endl << std::endl;
+		std::cout << "What is the new state of the game? " << std::endl;
+		std::cout.flush();
+
+		std::string new_status;
+retry:
+		std::getline(std::cin, new_status);
+
+		if (new_status.size() != 0 && new_status.size() != word_length) {
+			std::cout << "That's not the right length!" << std::endl;
+			goto retry;
+		}
+
+		if (new_status != status) {
+			for (int i = 0; i < word_length; ++i) {
+				if (status[i] != '-' && new_status[i] != status[i]) {
+					std::cout << "You changed a letter!" << std::endl;
+					goto retry;
+				}
+			}
+		}
+
+		if (new_status == status || new_status.size() == 0) {
+			std::cout << "Wrong guess!" << std::endl;
+
+			guess->mark_invalid();
+			wrong_guesses += 1;
+		}
+		else {
+			std::cout << "Excellent!" << std::endl;
+			guess->certain = true;
+		}
+
+		if (new_status.size() != 0) status = new_status;
+	}
+
+	std::cout << "Word is: " << status << std::endl;
+	std::cout << "Total guesses: " << total_guesses << std::endl
+		      << "Wrong guesses: " << wrong_guesses << std::endl;
+	return 0;
+}
