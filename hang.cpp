@@ -136,7 +136,7 @@ struct not_prediction : public prediction {
 
 	bool depends_on(const prediction* other) const override {
 		if (isa<contains_prediction>(other)) {
-			return asa<contains_prediction>(other)->segment.find(mal) != std::string::npos;
+			return asa<contains_prediction>(other)->segment[0] == mal && asa<contains_prediction>(other)->segment.size() == 1;
 		}
 		return false;
 	}
@@ -149,7 +149,13 @@ struct not_prediction : public prediction {
 		return false;
 	}
 
-	std::string as_string() const override {return "Contains specific letters";}
+	std::string as_string() const override {
+		std::string map{};
+		for (const auto& b : must_be) {
+			map.push_back(b ? '*' : '-');
+		}
+		return "Contains specific letters: " + std::string{mal} + " in "s + map;
+	}
 };
 
 struct uses_bit_prediction : public prediction {
@@ -399,12 +405,20 @@ void update_predictions_loop(float vals[], std::vector<std::string> &new_possibl
 		for (const auto &a : predictions) {
 			if (a->valid_for(possible[i])) {
 				if (a->invalid) {
+					if (possible[i] == "butter") {
+						#pragma omp critical(cout)
+						std::cout << a->as_string() << std::endl;
+					}
 					good = false;
 				}
 				if constexpr (Second)
 					vals[j] += word_popularity[possible[i]] * a->importance();
 			}
 			else if (a->certain) {
+				if (possible[i] == "butter") {
+					#pragma omp critical(cout)
+					std::cout << "2" << a->as_string() << std::endl;
+				}
 				good = false;
 			}
 			++j;
